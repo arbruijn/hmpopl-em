@@ -376,7 +376,7 @@ int main(int argc, char **argv) {
                 return 1;
         }
     }
-    filename = argi < argc ? argv[argi] : "game0.hmp";
+    filename = argi < argc ? argv[argi] : "descent.hmp";
 
     getbanks(filename, &melobnk, &drumbnk);
     
