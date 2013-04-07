@@ -5,6 +5,7 @@ Interplay/Parallax Descent HMP midi player with OPL3 emulation for Emscripten
 
 Includes DosBox OPL3 emulator (<http://www.dosbox.com>)
 
+ROUGH DRAFT version
 
 Build
 -----
