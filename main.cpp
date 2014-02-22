@@ -20,7 +20,7 @@ struct song {
     unsigned char msg[3];
 };
 
-#define SNDBUFSIZE 48000
+#define SNDBUFSIZE 65536
 //int deadbeef = 0xdeadbeef;
 short sndbuf[SNDBUFSIZE];
 int sndbuf_write = 0;
@@ -34,13 +34,10 @@ static void SendMonoAudio(unsigned long count, int* samples) {
 }
 static void SendStereoAudio(unsigned long count, int* samples) {
     int icount = (int)count * 2;
-//printf("sendaudio %x\n", deadbeef);
-if (sndbuf_write > SNDBUFSIZE) { printf("over before\n"); abrt=1; abort(); }
     while (icount > 0) {
         while (sndbuf_read == sndbuf_write && !sndbuf_empty) {
             printf("wait audio drain w=%d r=%d\n", sndbuf_write, sndbuf_read);
             //SDL_Delay(40);
-//if (sndbuf_write > SNDBUFSIZE) { printf("over after\n"); abrt=1; abort(); }
             return;
         }
         int cur = (sndbuf_write < sndbuf_read ? sndbuf_read : SNDBUFSIZE) - sndbuf_write;
@@ -62,7 +59,6 @@ if (sndbuf_write > SNDBUFSIZE) { printf("over before\n"); abrt=1; abort(); }
         //p[0] = ~p[0]; p[1] = ~p[1]; p[2] = ~p[2]; p[3] = ~p[3];
         if (sndbuf_write >= SNDBUFSIZE)
             sndbuf_write -= SNDBUFSIZE;
-//if (sndbuf_write > SNDBUFSIZE) { printf("over after inc w=%d c=%d\n", sndbuf_write, cur); abrt=1; abort(); }
         //printf("snd write %d\n", cur);
         if(sndbuf_empty) {
             //printf("%d sndbuf_empty=%d\n", __LINE__, sndbuf_empty);
@@ -79,10 +75,8 @@ if (sndbuf_write > SNDBUFSIZE) { printf("over before\n"); abrt=1; abort(); }
             printf("postz %d\n", sndbuf_write);
             sndbuf_write = ~sndbuf_write;
             printf("postz %d\n", sndbuf_write);
-//if (sndbuf_write > SNDBUFSIZE) { printf("over after z w=%d\n", sndbuf_write); abrt=1; abort(); }
         }
     }
-//if (sndbuf_write > SNDBUFSIZE) { printf("over after w=%d\n", sndbuf_write); abrt=1; abort(); }
     //printf("wrote=%d w=%d r=%d\n", (int)count * 2, sndbuf_write, sndbuf_read);
 }
 
@@ -181,22 +175,16 @@ int song_step(struct song *song, DBOPL::Handler *h, int freq) {
 	if (song->gen) {
 	    int max = SNDBUFSIZE / 8;
 	    int n = song->gen > max ? max : song->gen;
-//if (sndbuf_write > SNDBUFSIZE) { printf("gensmp write over before\n"); abrt=1; abort(); }
         generate_samples(h, n);
-//if (sndbuf_write > SNDBUFSIZE) { printf("gensmp write over after\n"); abrt=1; abort(); }
 	    song->gen -= n;
 	    if (song->gen)
 	        return 0;
-//if (sndbuf_write > SNDBUFSIZE) { printf("gen play_midi write over before\n"); abrt=1; abort(); }
         hmpopl_play_midi(song->h, song->msg[0] >> 4, song->msg[0] & 0x0f, song->msg[1], song->msg[2]);
-//if (sndbuf_write > SNDBUFSIZE) { printf("gen play_midi write over after\n"); abrt=1; abort(); }
 	}
 	
 	for (;;) {
-//if (sndbuf_write > SNDBUFSIZE) { printf("get_ev write over before\n"); abrt=1; abort(); }
 	    if ((rc = hmp_get_event(song->hf, &ev)))
     	    return rc;
-//if (sndbuf_w	rite > SNDBUFSIZE) { printf("get_ev write over after\n"); abrt=1; abort(); }
 	    if (ev.datalen)
 	        continue;
         if ((ev.msg[0] & 0xf0) == 0xb0 && ev.msg[1] == 7) {
@@ -212,13 +200,8 @@ int song_step(struct song *song, DBOPL::Handler *h, int freq) {
             song->msg[2] = ev.msg[2];
             break;
         }
-            //generate_samples(h, freq * ev.delta / 120);
         //printf("%02x %02x %02x\n", ev.msg[0], ev.msg[1], ev.msg[2]);
-//if (sndbuf_write > SNDBUFSIZE) { printf("play_midi write over before\n"); abrt=1; abort(); }
         hmpopl_play_midi(song->h, ev.msg[0] >> 4, ev.msg[0] & 0x0f, ev.msg[1], ev.msg[2]);
-//if (sndbuf_write > SNDBUFSIZE) { printf("play_midi write over after\n"); abrt=1; abort(); }
-        //if (ev.delta)
-        //    break;
 	}
 	return 0;
 }
@@ -235,16 +218,15 @@ static void mySDL_AudioCallback(void*, Uint8* stream, int len) {
 if (abrt) return;
         if (sndbuf_write >= SNDBUFSIZE) // workaround arm bug
             sndbuf_write -= SNDBUFSIZE;
-    //int olen = len >> 1;
+    int olen = len >> 1;
     len >>= 1;
     //write(1, "drain\n", 6);
     //printf("cb %d", len);
-if (sndbuf_write > SNDBUFSIZE) { printf("cb write over before %d\n", sndbuf_write); abrt=1; abort(); }
     short* target = (short*) stream;
     while (len > 0) {
         int i;
         if (sndbuf_read == sndbuf_write && sndbuf_empty) {
-            //printf("silence r=%d w=%d\n", sndbuf_read, sndbuf_write);
+            printf("silence r=%d w=%d olen=%d\n", sndbuf_read, sndbuf_write, olen);
             for (i = 0; i < len; i++)
                 target[i] = 0; //(short)(sin(((double)sinpos++ * 2 * M_PI) / 100.0) * 32000.0);
             break;
@@ -263,7 +245,6 @@ if (sndbuf_write > SNDBUFSIZE) { printf("cb write over before %d\n", sndbuf_writ
             sndbuf_empty = 1;
     }
     //printf("read=%d w=%d r=%d\n", olen, sndbuf_write, sndbuf_read);
-if (sndbuf_write > SNDBUFSIZE) { printf("cb write over after\n"); abrt=1; abort(); }
 }
 
 char melobuf[32], drumbuf[32];
@@ -316,10 +297,6 @@ int freq;
 //SDL_AudioSpec obtained;
 struct song song;
 DBOPL::Handler opl;
-extern "C" {
-extern int myOpenAudio(SDL_AudioSpec *a, SDL_AudioSpec *b);
-extern void myPauseAudio(int n);
-}
 
 void step() {
     if (abrt) return;
@@ -328,7 +305,7 @@ void step() {
         int r = sndbuf_read, w = sndbuf_write;
         int avail = r - w + (w > r || (r == w && sndbuf_empty) ? SNDBUFSIZE : 0);
         if (avail < SNDBUFSIZE / 2) {
-            //printf("wait r=%d w=%d e=%d, avail=%d\n", r, w, sndbuf_empty, avail);
+			//printf("wait r=%d w=%d e=%d, avail=%d\n", r, w, sndbuf_empty, avail);
             break;
         }
         int rc;
@@ -343,11 +320,11 @@ void step() {
         	hmp_reset_tracks(song.hf);
         	hmpopl_reset(song.h);
 			did_reset = 1;
-            //myPauseAudio(1);
+            SDL_PauseAudio(1);
             //SDL_Quit();
         }
         if (!started && sndbuf_write >= 4800) {
-            myPauseAudio(0);
+            SDL_PauseAudio(0);
             printf("started\n");
             started = 1;
         }
@@ -359,8 +336,6 @@ int main(int argc, char **argv) {
     const char *melobnk = "melodic.bnk";
     const char *drumbnk = "drum.bnk";
 
-
-    printf("main called\n");
     sndbuf_empty = 1;
     int argi = 1;
     while (argi < argc && argv[argi][0] == '-') {
@@ -380,9 +355,6 @@ int main(int argc, char **argv) {
 
     getbanks(filename, &melobnk, &drumbnk);
     
-
-//printf("%d sndbuf_empty=%d\n", __LINE__, sndbuf_empty);
-
 	if(SDL_Init(SDL_INIT_AUDIO)<0) {
 		printf("SDL_Init failed");
 		return 1;
@@ -394,32 +366,27 @@ int main(int argc, char **argv) {
     spec.freq     = 48000;
     spec.format   = AUDIO_S16SYS;
     spec.channels = 2;
-    spec.samples  = 48000 / 2;
+    spec.samples  = 16384;
     spec.callback = mySDL_AudioCallback;
-    if(myOpenAudio(&spec, NULL) < 0) {
+    if(SDL_OpenAudio(&spec, NULL) < 0) {
         fprintf(stderr, "Couldn't open audio: %s\n", SDL_GetError());
         return 1;
     }
     freq = spec.freq;
 
     printf("freq %d\n", freq);
-//printf("%d sndbuf_empty=%d\n", __LINE__, sndbuf_empty);
     opl.Init(freq);
-//printf("%d sndbuf_empty=%d\n", __LINE__, sndbuf_empty);
-    
 
-printf("start play %s %s %s\n", filename, melobnk, drumbnk);
+	printf("start play %s %s %s\n", filename, melobnk, drumbnk);
     if (song_start(filename, melobnk, drumbnk, &opl, &song))
         return 1;
 
-//printf("%d sndbuf_empty=%d\n", __LINE__, sndbuf_empty);
     emscripten_set_main_loop(step, 20, 0);
-//printf("%d sndbuf_empty=%d\n", __LINE__, sndbuf_empty);
-
     return 0;
 }
 
 extern "C" int play(const char *filename) {
+	printf("play %s\n", filename);
     const char *melobnk = "melodic.bnk";
     const char *drumbnk = "drum.bnk";
     song_stop(&song);
@@ -459,6 +426,5 @@ extern "C" const char *getsng(void) {
 		buf[bufpos++] = '\n';
 	}
 	buf[bufpos] = 0;
-	printf("sng=%s\n", buf);
 	return buf;
 }
