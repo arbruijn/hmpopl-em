@@ -4,14 +4,26 @@
 #include <stdio.h>
 #include <math.h>
 #include "loaddata.h"
-#include "SDL/SDL.h"
-#include "SDL/SDL_mixer.h"
+#include "SDL2/SDL.h"
+//#include "SDL/SDL_mixer.h"
+#ifdef NUKED
+extern "C" {
+#include "opl3.h"
+}
+#else
 #include "dbopl.h"
-#include <emscripten.h>
+#endif
+//#include <emscripten.h>
 extern "C" {
 #include "hmpfile.h"
 #include "hmpopl.h"
 }
+
+#ifdef NUKED
+typedef opl3_chip opl_t;
+#else
+typedef DBOPL::Handler opl_t;
+#endif
 
 struct song {
     struct hmp_file *hf;
@@ -80,14 +92,15 @@ static void SendStereoAudio(unsigned long count, int* samples) {
     //printf("wrote=%d w=%d r=%d\n", (int)count * 2, sndbuf_write, sndbuf_read);
 }
 
-
-
 static void writereg(void *data, int idx, int reg, int val) {
+    #ifdef NUKED
+    OPL3_WriteRegBuffered((opl_t *)data, (idx << 8) | reg, val);
+    #else
     DBOPL::Handler *opl = (DBOPL::Handler *)data;
     opl->WriteReg((idx << 8) | reg, val);
+    #endif
     //printf("%d.%02x, %02x ", idx, reg, val);
 }
-
 
 static int loadbankfile(void *runner, hmpopl *h, const char *filename, int isdrum) {
 	int size;
@@ -101,12 +114,12 @@ static int loadbankfile(void *runner, hmpopl *h, const char *filename, int isdru
 		free(data);
 	return 0;
 err:
-	if (data)
+	if (data && dofree)
 		free(data);
 	return -1;
 }
 
-int song_start(const char *mus_filename, const char *mus_melodic_file, const char *mus_drum_file, DBOPL::Handler *opl, struct song *song) {
+int song_start(const char *mus_filename, const char *mus_melodic_file, const char *mus_drum_file, opl_t *opl, struct song *song) {
     char buf[32];
     void *runner = NULL;
     int song_size;
@@ -160,15 +173,34 @@ err:
     return -1;
 }
 
-void generate_samples(DBOPL::Handler *h, int samples) {
+void generate_samples(opl_t *h, int samples) {
+    #ifdef NUKED
+    samples <<= 1;
+    while (samples) {
+        while (sndbuf_read == sndbuf_write && !sndbuf_empty) {
+            printf("wait audio drain w=%d r=%d\n", sndbuf_write, sndbuf_read);
+            SDL_Delay(40);
+        }
+        int n = (sndbuf_write < sndbuf_read ? sndbuf_read : SNDBUFSIZE) - sndbuf_write;
+        if (n > samples)
+            n = samples;
+        //printf("gen stream %d\n", n);
+        OPL3_GenerateStream(h, sndbuf + sndbuf_write, n >> 1);
+        if ((sndbuf_write += n) == SNDBUFSIZE)
+            sndbuf_write = 0;
+        sndbuf_empty = 0;
+        samples -= n;
+    }
+    #else
     while (samples > 0) {
         int n = samples > 512 ? 512 : samples;
         h->Generate(SendMonoAudio, SendStereoAudio, n);
         samples -= n;
     }
+    #endif
 }
 
-int song_step(struct song *song, DBOPL::Handler *h, int freq) {
+int song_step(struct song *song, opl_t *h, int freq) {
 	int rc;
 	hmp_event ev;
 	
@@ -248,55 +280,17 @@ if (abrt) return;
 }
 
 char melobuf[32], drumbuf[32];
-int getbanks(const char *filename, const char **melobnk, const char **drumbnk) {
-    void *runner = NULL;
-    int sng_size;
-	int freesng;
-    const char *sng = (const char *)loadurl_cf(runner, "descent.sng", &sng_size, &freesng);
-	if (!sng)
-		return 0;
-        
-    const char *p = sng;
-    int filename_len = strlen(filename);
-    while (p < sng + sng_size) {
-        const char *e;
-        if (!(e = (const char *)memchr(p, '\n', sng + sng_size - p)))
-            e = sng + sng_size;
-        if (e > p && e[-1] == '\r')
-            e--;
-        //printf("sng: %.*s\n", e - p, p);
-        if (e - p > filename_len && !memcmp(p, filename, filename_len) && p[filename_len] == '\t') {
-            const char *pmelo = p + filename_len + 1;
-            const char *emelo = (const char *)memchr(pmelo, '\t', e - pmelo);
-            if (!emelo)
-                emelo = e;
-            const char *pdrum = emelo + 1;
-            const char *edrum = (const char *)memchr(pdrum, '\t', e - pdrum);
-            if (!edrum)
-                edrum = e;
-            if (emelo - pmelo < (int)sizeof(melobuf) && edrum - pdrum < (int)sizeof(drumbuf)) {
-                memcpy(melobuf, pmelo, emelo - pmelo);
-                melobuf[emelo - pmelo] = 0;
-                *melobnk = melobuf;
-                memcpy(drumbuf, pdrum, edrum - pdrum);
-                drumbuf[edrum - pdrum] = 0;
-                *drumbnk = drumbuf;
-            }
-        }
-        p = e + 1;
-        while (p < sng + sng_size && (*p == '\r' || *p == '\n'))
-            p++;
-    }
-	if (freesng)
-		free((void *)sng);
-    return 0;
-}
+#include "getbanks.c"
 
 int started = 0;
 int freq;
 //SDL_AudioSpec obtained;
 struct song song;
+#ifdef NUKED
+opl3_chip opl;
+#else
 DBOPL::Handler opl;
+#endif
 
 void step() {
     if (abrt) return;
@@ -305,7 +299,7 @@ void step() {
         int r = sndbuf_read, w = sndbuf_write;
         int avail = r - w + (w > r || (r == w && sndbuf_empty) ? SNDBUFSIZE : 0);
         if (avail < SNDBUFSIZE / 2) {
-			//printf("wait r=%d w=%d e=%d, avail=%d\n", r, w, sndbuf_empty, avail);
+            //printf("wait r=%d w=%d e=%d, avail=%d\n", r, w, sndbuf_empty, avail);
             break;
         }
         int rc;
@@ -320,10 +314,10 @@ void step() {
         	hmp_reset_tracks(song.hf);
         	hmpopl_reset(song.h);
 			did_reset = 1;
-            SDL_PauseAudio(1);
+            //SDL_PauseAudio(1);
             //SDL_Quit();
         }
-        if (!started && sndbuf_write >= 4800) {
+        if (!started && sndbuf_write >= 8192) {
             SDL_PauseAudio(0);
             printf("started\n");
             started = 1;
@@ -353,7 +347,9 @@ int main(int argc, char **argv) {
     }
     filename = argi < argc ? argv[argi] : "descent.hmp";
 
-    getbanks(filename, &melobnk, &drumbnk);
+    getbanks(filename, melobuf, sizeof(melobuf), drumbuf, sizeof(drumbuf));
+    melobnk = melobuf;
+    drumbnk = drumbuf;
     
 	if(SDL_Init(SDL_INIT_AUDIO)<0) {
 		printf("SDL_Init failed");
@@ -362,11 +358,12 @@ int main(int argc, char **argv) {
 	//atexit(SDL_Quit);
 
 //printf("%d sndbuf_empty=%d\n", __LINE__, sndbuf_empty);
+#ifndef __linux__
     SDL_AudioSpec spec;
     spec.freq     = 48000;
     spec.format   = AUDIO_S16SYS;
     spec.channels = 2;
-    spec.samples  = 16384;
+    spec.samples  = 4096;
     spec.callback = mySDL_AudioCallback;
     if(SDL_OpenAudio(&spec, NULL) < 0) {
         fprintf(stderr, "Couldn't open audio: %s\n", SDL_GetError());
@@ -375,13 +372,25 @@ int main(int argc, char **argv) {
     freq = spec.freq;
 
     printf("freq %d\n", freq);
+    #ifdef NUKED
+    OPL3_Reset(&opl, freq);
+    #else
     opl.Init(freq);
+    #endif
+#endif
 
-	printf("start play %s %s %s\n", filename, melobnk, drumbnk);
+    printf("start play %s %s %s\n", filename, melobnk, drumbnk);
     if (song_start(filename, melobnk, drumbnk, &opl, &song))
         return 1;
 
-    emscripten_set_main_loop(step, 20, 0);
+    while (1) {
+        step();
+        fflush(stdout);
+        SDL_Delay(1);
+        //SDL_Event event;
+        //if(!SDL_WaitEventTimeout(&event,0)) break;
+        //if (event.type == SDL_QUIT) break;
+    }
     return 0;
 }
 
@@ -390,8 +399,8 @@ extern "C" int play(const char *filename) {
     const char *melobnk = "melodic.bnk";
     const char *drumbnk = "drum.bnk";
     song_stop(&song);
-    getbanks(filename, &melobnk, &drumbnk);
-    if (song_start(filename, melobnk, drumbnk, &opl, &song))
+    getbanks(filename, melobuf, sizeof(melobuf), drumbuf, sizeof(drumbuf));
+    if (song_start(filename, melobuf, drumbuf, &opl, &song))
         return 1;
     return 0;
 }

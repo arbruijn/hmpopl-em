@@ -3,7 +3,8 @@ hmpopl-em
 
 Interplay/Parallax Descent HMP midi player with OPL3 emulation for Emscripten
 
-Includes DosBox OPL3 emulator (<http://www.dosbox.com>)
+Includes Nuked OPL3 emulater by Alexey Khokholov (Nuke.YKT) with GPL 2 or
+later license.
 
 ROUGH DRAFT version
 
@@ -17,4 +18,4 @@ Build
 Run
 ---
 
-* Open hmpopl.htm in Firefox
+* Open playerweb.htm in a browser

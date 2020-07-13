@@ -8,15 +8,15 @@
 typedef struct hmp_event {
 	unsigned int delta;
 	unsigned char msg[3];
-	unsigned char *data;
+	const unsigned char *data;
 	unsigned int datalen;
 	int trk;
 } hmp_event;
 
 typedef struct hmp_track {
-	unsigned char *data;
+	const unsigned char *data;
 	unsigned int len;
-	unsigned char *cur;
+	const unsigned char *cur;
 	unsigned int left;
 	unsigned int cur_time;
 	int prio;
@@ -27,11 +27,7 @@ typedef struct hmp_file {
 	hmp_track trks[HMP_TRACKS];
 	unsigned int cur_time;
 	int tempo;
-	unsigned char *pending;
-	unsigned int pending_size;
-	unsigned int pending_event;
-	int stop;		/* 1 -> don't send more data */
-	int bufs_in_mm;	/* number of queued buffers */
+	int loop;
 } hmp_file;
 
 
@@ -40,7 +36,8 @@ typedef struct hmp_file {
 #define HMP_MM_ERR -3
 #define HMP_EOF 1
 
-hmp_file *hmp_open(const void *data, int size, int dev);
+hmp_file *hmp_open(const void *data, int size, int dev, int loop);
+int hmp_init(hmp_file *hmp, const void *data, int size, int dev, int loop);
 int hmp_play(hmp_file *hmp);
 void hmp_close(hmp_file *hmp);
 void hmp_reset_tracks(struct hmp_file *hmp);

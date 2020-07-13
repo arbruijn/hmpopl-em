@@ -1,0 +1,9 @@
+hmpopl.data
+hmpopl.html
+playerweb.html
+*~
+descent.hog
+*.o
+*.wasm
+playerweb.js
+hmpopl.js

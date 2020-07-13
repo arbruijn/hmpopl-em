@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<script>
+    // Check for wasm support.
+    if (!('WebAssembly' in window)) {
+      alert('you need a browser with wasm support enabled :(');
+    }
+
+    var tempRet0;
+    var env = { 
+      i64Add__asm: true,
+      i64Add__sig: 'iiiii',
+      _i64Add: function(a, b, c, d) {
+        a = a|0; b = b|0; c = c|0; d = d|0;
+        var l = 0, h = 0;
+        l = (a + c)>>>0;
+        h = (b + d + (((l>>>0) < (a>>>0))|0))>>>0; // Add carry from low word to high word on overflow.
+        return tempRet0 = h, l|0;
+      },
+      getTempRet0__asm: true,
+      getTempRet0__sig: 'i',
+      getTempRet0: function() {
+        return tempRet0;
+      },
+      bitshift64Shl__asm: true,
+      bitshift64Shl__sig: 'iiii',
+      _bitshift64Shl: function(low, high, bits) {
+        low = low|0; high = high|0; bits = bits|0;
+        var ander = 0;
+        if ((bits|0) < 32) {
+          ander = ((1 << bits) - 1)|0;
+          tempRet0 = (high << bits) | ((low&(ander << (32 - bits))) >>> (32 - bits));
+          return low << bits;
+        }
+        tempRet0 = low << (bits - 32);
+        return 0;
+      },
+      _log_int:console.log,
+      memory:new WebAssembly.Memory({ initial: 256 })
+    }
+
+    // Loads a WebAssembly dynamic library, returns a promise.
+    // imports is an optional imports object
+    function loadWebAssembly(filename, imports) {
+      // Fetch the file and compile it
+      return fetch(filename)
+        .then(response => response.arrayBuffer())
+        .then(buffer => WebAssembly.compile(buffer))
+        .then(module => {
+          // Create the imports for the module, including the
+          // standard dynamic library imports
+          imports = imports || {};
+          imports.env = imports.env || env;
+          imports.env.memoryBase = imports.env.memoryBase || 0;
+          imports.env.tableBase = imports.env.tableBase || 0;
+          imports.env.abort = imports.env.abort || alert;
+          if (!imports.env.memory) {
+            imports.env.memory = new WebAssembly.Memory({ initial: 256 });
+          }
+          if (!imports.env.table) {
+            imports.env.table = new WebAssembly.Table({ initial: 256, element: 'anyfunc' });
+          }
+          // Create the instance.
+          return WebAssembly.instantiate(module, imports);
+        });
+    }
+
+let audioContext;
+let rate;
+
+var xhr = new XMLHttpRequest();
+xhr.open('GET', 'descent.hog', true);
+xhr.responseType = 'arraybuffer';
+xhr.onload = function(ev) {
+    var ret = this.response;
+    if (!ret) {
+        console.log('no response');
+        return;
+    }
+    var data = new Uint8Array(ret);
+    if  (data[0] != 0x44 || data[1] != 0x48 || data[2] != 0x46) {
+        console.log('not hog: ' + data[0]);
+        return;
+    }
+    var alen = data.length;
+    var i = 3;
+    var files = {};
+    while (i < alen) {
+        var name = '';
+        for (var j = 0; j < 13 && data[i + j]; j++)
+            name += String.fromCharCode(data[i + j]);
+        var flen = data[i + 13] | (data[i + 14] << 8) | (data[i + 15] << 16) | (data[i + 16] << 24);
+        console.log(name, flen);
+        i += 17;
+        files[name] = data.subarray(i, i + flen);
+        i += flen;
+    }
+    window.hog = files;
+    //haveHog(files); //{data:data, files:files, get:function(name){var f=this.files[name];if (!f) throw new Exception('Not found: ' + name);return this.data.subarray(f[0], f[0] + f[1]);}});
+    let html = '';
+    for (let f in files)
+    	if (f.indexOf('.hmp') !== -1)
+	    	html += '<a href="#" onclick="play(\'' + f + '\');return false">' + f + '</a><br>';
+    document.body.innerHTML = html;
+    next();
+}
+xhr.send();
+
+
+    // Main part of this example, loads the module and uses it.
+    loadWebAssembly('playerweb.wasm')
+      .then(instance => {
+        var exports = instance.exports; // the exports of that instance
+        //exports.__post_instantiate();
+        exports._initialize();
+        exports.__wasm_call_ctors();
+        exports.playerweb_init(rate);
+        console.log('playerweb init done');
+        window.playerweb = exports;
+        window.playerwebMem = new Uint8Array(exports.memory.buffer);
+        window.playerwebMem16s = new Int16Array(exports.memory.buffer);
+        next();
+      }
+    );
+
+function next() {
+  console.log('next', window.hog, window.playerweb);
+  if (!window.hog || !window.playerweb)
+    return;
+  play('descent.hmp');
+}
+
+function getStr(arr, ofs) {
+  var i = ofs;
+  while (arr[i])
+    i++;
+  return new TextDecoder().decode(arr.subarray(ofs, i));
+}
+
+function getBankFiles(fn) {
+  var sng = new TextDecoder().decode(hog['descent.sng']);
+  if (!sng)
+  	return ['melodic.bnk', 'drum.bnk'];
+  var m = sng.match(new RegExp('(?:^|\n)' + fn.replace(/[.]/g, '[.]') + '\\s+(\\S+)\\s+(\\S+)'));
+  return m && [m[1], m[2]];
+}
+
+function play(fn) {
+  var song = hog[fn.slice(0, -1) + 'q'] || hog[fn];
+  if (!song)
+    throw new Error('song not found');
+  var bnks = getBankFiles(fn);
+  var melo, drum;
+  if (!bnks || !(melo = hog[bnks[0]]) || !(drum = hog[bnks[1]]))
+    throw new Error('banks not found ' + bnks);
+  console.log('playing...');
+  //playerweb._playerweb_stop();
+
+  if (audioContext)
+    audioContext.close();
+  audioContext = new AudioContext();
+  time = 0;
+  if (!rate) {
+    rate = audioContext.sampleRate;
+    playerweb.playerweb_init(rate);
+  }
+  playerwebMem.set(song, playerweb.get_song_data());
+  playerwebMem.set(melo, playerweb.get_melobnk_data());
+  playerwebMem.set(drum, playerweb.get_drumbnk_data());
+  console.log(playerweb.get_song_data(), playerweb.get_melobnk_data(), playerweb.get_drumbnk_data());
+  console.log(song.length, melo.length, drum.length);
+  var ret = playerweb.playerweb_play(song.length, melo.length, drum.length, 1);
+  if (ret) {
+    console.log('play failed', ret, getStr(playerwebMem, ret));
+    
+    return;
+  }
+  nextBuf();
+  nextBuf();
+  console.log('play started!');
+}
+
+let samps = 48000 >> 2;
+let time = 0;
+function fillBuf(myBuffer) {
+  let ch0 = myBuffer.getChannelData(0);
+  let ch1 = myBuffer.getChannelData(1);
+  let ofs = playerweb.playerweb_gen(samps * 2) >> 1;
+  let sndBuf = playerwebMem16s;
+  //let sndBuf = playerwebMem16s.subarray(ofs, ofs + samps * 2);
+  //console.log(sndBuf);
+  for (var i = 0, p = ofs; i < samps; i++, p += 2) {
+    ch0[i] = sndBuf[p] / 32768;
+    ch1[i] = sndBuf[p + 1] / 32768;
+  }
+  //onsole.log(ofs);
+  /*
+  for (let sampleNumber = 0 ; sampleNumber < samps ; sampleNumber++) {
+    ch0[sampleNumber] = generateSample(sampleNumber);
+    ch1[sampleNumber] = generateSample(sampleNumber);
+  }
+  */
+}
+    
+let freeBufs = [];
+function nextBuf() {
+  let myBuffer = freeBufs.length ? freeBufs.pop() : audioContext.createBuffer(2, samps, rate);
+  fillBuf(myBuffer);
+  let src = audioContext.createBufferSource();
+  src.buffer = myBuffer;
+  src.connect(audioContext.destination);
+  src.onended = function() { freeBufs.push(this.buffer); nextBuf(); }
+  src.start(time);
+  time += samps / rate;
+}
+//next();
+//next();
+</script>

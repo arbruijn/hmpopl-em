@@ -1,7 +1,9 @@
 #include <stdint.h>
 //#include <stdio.h>
 #include <limits.h>
+#ifndef NOALLOC
 #include <stdlib.h>
+#endif
 #include <string.h>
 #include "hmpfile.h"
 
@@ -9,9 +11,8 @@ static int get_le32(const uint8_t *p) {
 	return p[0] | (p[1] << 8) | (p[2] << 16) | (p[3] << 24);
 }
 
-hmp_file *hmp_open(const void *data, int size, int dev) {
+int hmp_init(hmp_file *hmp, const void *data, int size, int dev, int loop) {
 	int i;
-	hmp_file *hmp;
 	int num_tracks;
 	int tempo;
 	//typedef uint32_t trkdev_t[5];
@@ -22,98 +23,106 @@ hmp_file *hmp_open(const void *data, int size, int dev) {
 	const uint8_t *dataend = datap + size;
 	int num_trkok;
 
-	hmp = malloc(sizeof(hmp_file));
-	if (!hmp)
-		return NULL;
-
 	memset(hmp, 0, sizeof(*hmp));
 
-	if (size < 0x308 || memcmp(datap, "HMIMIDIP", 8))
-		goto err;
+	if (size < 0x308 || get_le32(datap) != 0x4d494d48 || get_le32(datap + 4) != 0x50494449) // HMIMIDIP 
+		return -1;
 
-    num_tracks = get_le32(datap + 0x30);
+	num_tracks = get_le32(datap + 0x30);
 	tempo = get_le32(datap + 0x38);
 
-	if ((num_tracks < 1) || (num_tracks > HMP_TRACKS))
-		goto err;
+	if (num_tracks < 1 || num_tracks > HMP_TRACKS)
+		return -1;
 
 	hmp->num_trks = num_tracks;
-    hmp->tempo = tempo;
+	hmp->tempo = tempo;
+	hmp->loop = loop;
 
-    //trkdev = (const trkdev_t *)(datap + 0x80);
+	//trkdev = (const trkdev_t *)(datap + 0x80);
 	//printf("trkdev: %02x %02x %02x %02x\n", datap[0x80], datap[0x81], datap[0x82], datap[0x83]);
 
-    datap += 0x308;
+	datap += 0x308;
 	num_trkok = 0;
-    for (i = 0; i < num_tracks; i++) {
-        uint32_t tracksize;
+	for (i = 0; i < num_tracks; i++) {
+		uint32_t tracksize;
 		int j;
-        
-        if (datap + 12 > dataend)
-            goto err;
-        
-        datap += 4;
-        tracksize = get_le32(datap);
-        datap += 4;
-        datap += 4;
+
+		if (datap + 12 > dataend)
+			return -1;
+
+		datap += 4;
+		tracksize = get_le32(datap);
+		datap += 4;
+		datap += 4;
 
 		tracksize -= 12;
 
 		//printf("track %d size %d\n", i, tracksize);
 		
 		if (datap + tracksize > dataend)
-		    goto err;
+			return -1;
 
 		hmp->trks[i].len = tracksize;
 
-		if (!(hmp->trks[i].data = malloc(tracksize)))
-			goto err;
+		//if (!(hmp->trks[i].data = malloc(tracksize)))
+		//	goto err;
 
-
-        for (j = 0; j < 5; j++)
+		for (j = 0; j < 5; j++)
 			trkdev[j] = get_le32(hdrp + 0x80 + i * 5 * 4 + j * 4);
-        if (trkdev[0]) {
-            int trkok = 0;
-            for (j = 0; j < 5; j++)
-                if (trkdev[j] == dev ||
-                    (trkdev[j] == 0xa002 && dev == 0xa009) ||
-                    (trkdev[j] == 0xa000 && (dev == 0xa001 || dev == 0xa008)))
-                    trkok = 1;
-            if (!trkok)
-                hmp->trks[i].len = 0;
-        }
-        //printf("trkpos %d=%x dev=%x,%x,%x,%x,%x ok=%d\n", i, (unsigned int)(datap - (const uint8_t *)data), trkdev[0], trkdev[1], trkdev[2], trkdev[3], trkdev[4], !!hmp->trks[i].len);
+		if (trkdev[0]) {
+			int trkok = 0;
+			for (j = 0; j < 5; j++)
+				if (trkdev[j] == dev ||
+					(trkdev[j] == 0xa002 && dev == 0xa009) ||
+					(trkdev[j] == 0xa000 && (dev == 0xa001 || dev == 0xa008)))
+					trkok = 1;
+			if (!trkok)
+				hmp->trks[i].len = 0;
+		}
+		//printf("trkpos %d=%x dev=%x,%x,%x,%x,%x ok=%d\n", i, (unsigned int)(datap - (const uint8_t *)data), trkdev[0], trkdev[1], trkdev[2], trkdev[3], trkdev[4], !!hmp->trks[i].len);
 		if (hmp->trks[i].len)
 			num_trkok++;
-        memcpy(hmp->trks[i].data, datap, tracksize);
-        datap += tracksize;
-   }
-   if (!num_trkok) {
-	 //printf("no ok tracks\n");
-     goto err;
-   }
+		//memcpy(hmp->trks[i].data, datap, tracksize);
+		hmp->trks[i].data = (unsigned char *)datap;
+		datap += tracksize;
+	}
+	if (!num_trkok) {
+		//printf("no ok tracks\n");
+		return -1;
+	}
+	hmp_reset_tracks(hmp);
+	return 0;
+}
 
-   return hmp;
-
-err:
-   hmp_close(hmp);
-   return NULL;
+#ifndef NOALLOC
+hmp_file *hmp_open(const void *data, int size, int dev, int loop) {
+	hmp_file *hmp = malloc(sizeof(hmp_file));
+	if (!hmp)
+		return NULL;
+	if (hmp_init(hmp, data, size, dev, loop)) {
+		hmp_close(hmp);
+		return NULL;
+	}
+	return hmp;
 }
 
 void hmp_close(hmp_file *hmp) {
+	#if 0
 	int i;
 
 	for (i = 0; i < hmp->num_trks; i++)
 		if (hmp->trks[i].data)
 			free(hmp->trks[i].data);
+	#endif
 	free(hmp);
 }
+#endif
 
 /*
  * read a HMI type variabele length number
  */
-static int get_var_num_hmi(unsigned char *data, int datalen, unsigned int *value) {
-	unsigned char *p;
+static int get_var_num_hmi(const unsigned char *data, int datalen, unsigned int *value) {
+	const unsigned char *p;
 	unsigned int v = 0;
 	int shift = 0;
 
@@ -122,32 +131,32 @@ static int get_var_num_hmi(unsigned char *data, int datalen, unsigned int *value
 		v += *(p++) << shift;
 		shift += 7;
 		datalen --;
-    }
+	}
 	if (!datalen)
 		return 0;
-    v += (*(p++) & 0x7f) << shift;
+	v += (*(p++) & 0x7f) << shift;
 	if (value) *value = v;
-    return p - data;
+	return p - data;
 }
 
 /*
  * read a MIDI type variabele length number
  */
-static int get_var_num(unsigned char *data, int datalen, unsigned int *value) {
-	unsigned char *orgdata = data;
+static int get_var_num(const unsigned char *data, int datalen, unsigned int *value) {
+	const unsigned char *orgdata = data;
 	unsigned int v = 0;
 
 	while ((datalen > 0) && (*data & 0x80))
 		v = (v << 7) + (*(data++) & 0x7f);
 	if (!datalen)
 		return 0;
-    v = (v << 7) + *(data++);
-    if (value) *value = v;
-    return data - orgdata;
+	v = (v << 7) + *(data++);
+	if (value) *value = v;
+	return data - orgdata;
 }
 
 int hmp_get_event(hmp_file *hmp, hmp_event *ev) {
-    static int cmdlen[7]={3,3,3,3,2,2,3};
+	static int cmdlen[7]={3,3,3,3,2,2,3};
 	int got;
 	unsigned int mindelta, delta;
 	int i, ev_num;
@@ -165,14 +174,19 @@ int hmp_get_event(hmp_file *hmp, hmp_event *ev) {
 			trk->left = 0;
 			continue;
 		}
-        delta += trk->cur_time - hmp->cur_time;
+		delta += trk->cur_time - hmp->cur_time;
 		if (delta < mindelta) {
 			mindelta = delta;
 			fndtrk = trk;
 		}
 	}
-	if (!(trk = fndtrk))
-			return HMP_EOF;
+	if (!(trk = fndtrk)) {
+		if (hmp->loop) {
+			hmp_reset_tracks(hmp);
+			return hmp_get_event(hmp, ev);
+		}
+		return HMP_EOF;
+	}
 
 	got = get_var_num_hmi(trk->cur, trk->left, &delta);
 
@@ -181,14 +195,14 @@ int hmp_get_event(hmp_file *hmp, hmp_event *ev) {
 	hmp->cur_time = trk->cur_time;
 
 	if ((trk->left -= got) < 3)
-			return HMP_INVALID_FILE;
+		return HMP_INVALID_FILE;
 	trk->cur += got;
 	/*memset(ev, 0, sizeof(*ev));*/ev->datalen = 0;
 	ev->msg[0] = ev_num = *(trk->cur++);
 	ev->trk = trk - hmp->trks;
 	trk->left--;
 	if (ev_num < 0x80)
-	    return HMP_INVALID_FILE; /* invalid command */
+		return HMP_INVALID_FILE; /* invalid command */
 	if (ev_num < 0xf0) {
 		ev->msg[1] = *(trk->cur++);
 		trk->left--;
@@ -202,12 +216,12 @@ int hmp_get_event(hmp_file *hmp, hmp_event *ev) {
 		if (!(got = get_var_num(ev->data = trk->cur, 
 			trk->left, &ev->datalen)))
 			return HMP_INVALID_FILE;
-	    trk->cur += ev->datalen;
+		trk->cur += ev->datalen;
 		if (trk->left <= ev->datalen)
 			return HMP_INVALID_FILE;
 		trk->left -= ev->datalen;
 	} else /* sysex -> error */
-	    return HMP_INVALID_FILE;
+		return HMP_INVALID_FILE;
 	return 0;
 }
 

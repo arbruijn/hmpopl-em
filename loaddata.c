@@ -2,6 +2,9 @@
 #include <stdlib.h>
 #include <string.h>
 
+//const char *hogfile = "d2demo.hog";
+const char *hogfile = "descent.hog";
+
 const char *loadurl(void *runner, const char *url, int *psize) {
   FILE *f;
   off_t size;
@@ -41,9 +44,11 @@ const char *loadurl_cf(void *runner, const char *fn, int *psize, int *dofree) {
 	}
 	*dofree = 0;
 	if (!cf) {
-		cf = loadurl(runner, "descent.hog", &cf_size);
-		if (!cf)
+		cf = loadurl(runner, hogfile, &cf_size);
+		if (!cf) {
+			perror(hogfile);
 			return NULL;
+		}
 		if (cf[0] != 'D' || cf[1] != 'H' || cf[2] != 'F')
 			return NULL;
 		const char *p = cf + 3;
@@ -65,7 +70,7 @@ const char *loadurl_cf(void *runner, const char *fn, int *psize, int *dofree) {
 			cf_entries[cf_entries_len].ofs = p - cf;
 			cf_entries_len++;
 			p += flen;
-			printf("cf: %s len=%x next=%x\n", cf_entries[cf_entries_len - 1].name, flen, (int)(p - cf));
+			//printf("cf: %s len=%x next=%x\n", cf_entries[cf_entries_len - 1].name, flen, (int)(p - cf));
 		}
 	}
 	for (i = 0; i < cf_entries_len; i++)

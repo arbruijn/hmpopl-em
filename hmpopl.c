@@ -1,9 +1,11 @@
+#ifndef NOALLOC
 #include <stdlib.h>
+#endif
 #include <stdint.h>
 #include <string.h>
 
 #include "hmpopl.h"
-int opl_log = 0;
+//int opl_log = 0;
 
 static int v_op[][2] = {{0, 3}, {1, 4}, {2, 5}, {8, 0xb}, {9, 0xc}, {0xa, 0xd}, {0x10, 0x13}, {0x11, 0x14}, {0x12, 0x15} };
 
@@ -13,7 +15,7 @@ static int velvol_vol[] = {
 	0x0D, 0x0C, 0x0C, 0x0B, 0x0B, 0x0A, 0x0A, 0x09, 0x09, 0x08, 0x08, 0x07, 0x07, 0x06, 0x06, 0x06,
 	0x05, 0x05, 0x05, 0x04, 0x04, 0x04, 0x04, 0x03, 0x03, 0x03, 0x02, 0x02, 0x02, 0x01, 0x01, 0x00};
 
-int notefnum[] = {
+static int notefnum[] = {
 0,0,0,0,0,0,0,0,0,0,0,0,
 343, 363, 385, 408, 432, 458, 485, 514, 544, 577, 611,
 647, 1367, 1387, 1409, 1432, 1456, 1482, 1509, 1538,
@@ -28,8 +30,7 @@ int notefnum[] = {
 7712, 7745, 7779, 7815, 7854, 7863, 7938, 7984, 8032,
 8084
 };
-int octfnum[] = { 324, 306, 289, 272, 257, 248, 229, 216, 204, 193, 182, 172 };
-
+static int octfnum[] = { 324, 306, 289, 272, 257, 248, 229, 216, 204, 193, 182, 172 };
 
 struct bnkins {
 	uint8_t field_00;
@@ -64,21 +65,6 @@ struct bnkins {
 	uint8_t op1_ws;
 } __attribute__((packed));
 
-struct oplins {
-	uint8_t op0_freq;
-	uint8_t op0_vol;
-	uint8_t op0_attdec;
-	uint8_t op0_sustrel;
-	uint8_t chfb;
-	uint8_t op1_freq;
-	uint8_t op1_vol;
-	uint8_t op1_attdec;
-	uint8_t op1_sustrel;
-	uint8_t flags;
-	uint8_t op0_ws;
-	uint8_t op1_ws;
-};
-
 struct bnkhdr {
     uint8_t major;
     uint8_t minor;
@@ -97,47 +83,18 @@ struct bnkdesc {
 } __attribute__((packed));
 
 
-struct hmpopl {
-	hmpopl_write_callback write;
-	void *write_data;
-	struct oplins melodic[128];
-	struct oplins drum[128];
-
-    int v_velo[9];
-    int v_ch[9];
-    int v_note[9];
-
-    int op_basevol[32];
-    int op_sustrel[32];
-
-    int ch_pan[16];
-    int ch_vol[16];
-    int ch_prog[16];
-    int ch_sust[16];
-    int ch_pitch[16];
-    int ch_pitched[16];
-    int ch_pitchrng[16];
-    int ch_sust_idx[16];
-
-    uint8_t ch_sustnotes[16][32];
-
-    uint8_t oplreg_key[9];
-    uint8_t oplreg_fnum[9];
-};
-
-
 enum oplri {
-oplri_connsel  = 0x04,
-oplri_new      = 0x05,
-oplri_freq     = 0x20,
-oplri_vol      = 0x40,
-oplri_attdec   = 0x60,
-oplri_sustrel  = 0x80,
-oplri_fnum     = 0xa0,
-oplri_key      = 0xb0,
-oplri_drum     = 0xbd,
-oplri_chfb     = 0xc0,
-oplri_ws       = 0xe0
+	oplri_connsel  = 0x04,
+	oplri_new      = 0x05,
+	oplri_freq     = 0x20,
+	oplri_vol      = 0x40,
+	oplri_attdec   = 0x60,
+	oplri_sustrel  = 0x80,
+	oplri_fnum     = 0xa0,
+	oplri_key      = 0xb0,
+	oplri_drum     = 0xbd,
+	oplri_chfb     = 0xc0,
+	oplri_ws       = 0xe0
 };
 
 static void parsebnk(struct oplins *ins, const struct bnkins *bnk) {
@@ -156,7 +113,7 @@ static void parsebnk(struct oplins *ins, const struct bnkins *bnk) {
     ins->op1_ws = bnk->op1_ws;
 }
 
-extern int printf(const char *format, ...);
+//extern int printf(const char *format, ...);
 static int loadbnk(struct oplins *ins, const void *data, int size) {
     const struct bnkhdr *bnkhdr = data;
     const struct bnkdesc *bnkdesc;
@@ -164,16 +121,20 @@ static int loadbnk(struct oplins *ins, const void *data, int size) {
     int num, i;
     if (size < sizeof(bnkhdr))
         return -1;
-    if (memcmp(bnkhdr->sig, "ADLIB-", 6))
+    if (memcmp(bnkhdr->sig, "ADLIB-", 6) &&
+        memcmp(bnkhdr->sig, "AMLIB-", 6) &&
+        memcmp(bnkhdr->sig, "ANLIB-", 6))
         return -1;
     num = bnkhdr->num_ins;
+    if (memcmp(bnkhdr->sig, "AMLIB-", 6) && num == 128 && size == 5404)
+        num--;
     if (size < bnkhdr->offset_name + num * sizeof(bnkdesc) || size < bnkhdr->offset_data)
         return -1;
     bnkdesc = (const struct bnkdesc *)((const uint8_t *)data + bnkhdr->offset_name);
     bnkins = (const struct bnkins *)((const uint8_t *)data + bnkhdr->offset_data);
     for (i = 0; i < num; i++) {
         int idx = bnkdesc[i].index;
-        if (size < bnkhdr->offset_data + (idx + 1) * sizeof(bnkins))
+        if (bnkhdr->offset_data + (idx + 1) * sizeof(bnkins) > size)
             return -1;
         parsebnk(&ins[i], &bnkins[idx]);
         ins[i].flags = bnkdesc[i].flags;
@@ -198,12 +159,13 @@ static int loadbnk(struct oplins *ins, const void *data, int size) {
     return 0;
 }        
 
+#ifndef opl_write
 static void opl_write(hmpopl *h, int idx, int reg, int val) {
-    if (opl_log) {
-        //printf("%d.%02x = %02x\n", idx, reg, val);
-    }
+    //if (opl_log)
+    //    //printf("%d.%02x = %02x\n", idx, reg, val);
     h->write(h->write_data, idx, reg, val);
 }
+#endif
 
 static void opl_write_both(hmpopl *h, int reg, int val) {
     opl_write(h, 0, reg, val);
@@ -302,7 +264,7 @@ static void v_setins(hmpopl *h, int v, struct oplins *ins) {
 	h->op_basevol[op] = ins->op0_vol;
 	h->op_basevol[op1] = ins->op1_vol;
 	
-	opl_log = 1;
+	//opl_log = 1;
 	opl_write_both(h, oplri_freq + op, ins->op0_freq);
 	opl_write_both(h, oplri_vol + op, ins->op0_vol);
 	opl_write_both(h, oplri_attdec + op, ins->op0_attdec);
@@ -317,7 +279,7 @@ static void v_setins(hmpopl *h, int v, struct oplins *ins) {
 	opl_write_both(h, oplri_attdec + op1, ins->op1_attdec);
 	opl_write_both(h, oplri_sustrel + op1, ins->op1_sustrel);
 	opl_write_both(h, oplri_ws + op1, ins->op1_ws);
-	opl_log = 0;
+	//opl_log = 0;
 }
 
 
@@ -472,6 +434,8 @@ static void initdata(hmpopl *h) {
         h->v_note[v] = 0;
         h->v_ch[v] = 0;
         h->v_velo[v] = 127;
+        //h->oplreg_key[v] = 0;
+        //h->oplreg_fnum[v] = 0;
     }
     for (ch = 0; ch < 16; ch++) {
         h->ch_pitch[ch] = 64;
@@ -483,7 +447,11 @@ static void initdata(hmpopl *h) {
         //ch_panset[ch] = 0;
         h->ch_sust_idx[ch] = 0;
         h->ch_pitchrng[ch] = 2;
+        //h->ch_sust[ch] = 0;
     }
+    //memset(h->op_basevol, 0, sizeof(h->op_basevol));
+    //memset(h->op_sustrel, 0, sizeof(h->op_sustrel));
+    //memset(h->ch_sustnotes, 0, sizeof(h->ch_sustnotes));
 }
 
 static void ch_setprog(hmpopl *h, int ch, int prog) {
@@ -532,8 +500,8 @@ static void ch_cntr(hmpopl *h, int ch, int cntr, int param) {
 }
 
 void hmpopl_play_midi(hmpopl *h, int event, int ch, int param1, int param2) {
-    if (ch < 0 || ch >= 16)
-        return;
+	if (ch < 0 || ch >= 16)
+		return;
 	switch (event) {
 		case 8:
 			ch_noteoff(h, ch, param1, param2);
@@ -554,14 +522,19 @@ void hmpopl_play_midi(hmpopl *h, int event, int ch, int param1, int param2) {
 }
 
 
+#ifndef NOALLOC
 hmpopl *hmpopl_new(void) {
 	return calloc(1, sizeof(hmpopl));
 }
 
 void hmpopl_done(hmpopl *h) {
-    opl_done(h);
+	#ifndef opl_write
+	if (h->write)
+	#endif
+		opl_done(h);
 	free(h);
 }
+#endif
 
 int hmpopl_set_bank(hmpopl *h, const void *data, int size, int isdrum) {
     return loadbnk(isdrum ? h->drum : h->melodic, data, size);
@@ -575,7 +548,6 @@ void hmpopl_set_write_callback(hmpopl *h, hmpopl_write_callback c, void *data) {
     h->write_data = data;
 }
 
-
 void hmpopl_start(hmpopl *h) {
 	opl_init(h);
 	opl_clear(h);
@@ -584,5 +556,6 @@ void hmpopl_start(hmpopl *h) {
 }
 
 void hmpopl_reset(hmpopl *h) {
-    initdata(h);
+	opl_clear(h);
+	initdata(h);
 }
